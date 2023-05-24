@@ -1,6 +1,7 @@
 from typing import List, Optional
 
 from langchain.chains import LLMChain
+from langchain.output_parsers import PydanticOutputParser
 
 from reworkd_platform.web.api.agent.agent_service.agent_service import AgentService
 from reworkd_platform.web.api.agent.analysis import Analysis, get_default_analysis
@@ -14,6 +15,7 @@ from reworkd_platform.web.api.agent.prompts import (
 from reworkd_platform.web.api.agent.tools.tools import (
     get_tools_overview,
     get_tool_from_name,
+    get_user_tools,
 )
 
 
@@ -24,23 +26,29 @@ class OpenAIAgentService(AgentService):
         llm = create_model(model_settings)
         chain = LLMChain(llm=llm, prompt=start_goal_prompt)
 
-        completion = chain.run({"goal": goal, "language": language})
+        completion = await chain.arun({"goal": goal, "language": language})
         print(f"Goal: {goal}, Completion: {completion}")
         return extract_tasks(completion, [])
 
     async def analyze_task_agent(
-        self, model_settings: ModelSettings, goal: str, task: str
+        self, model_settings: ModelSettings, goal: str, task: str, tool_names: List[str]
     ) -> Analysis:
         llm = create_model(model_settings)
         chain = LLMChain(llm=llm, prompt=analyze_task_prompt)
 
-        completion = chain.run(
-            {"goal": goal, "task": task, "tools_overview": get_tools_overview()}
+        pydantic_parser = PydanticOutputParser(pydantic_object=Analysis)
+        print(get_tools_overview(get_user_tools(tool_names)))
+        completion = await chain.arun(
+            {
+                "goal": goal,
+                "task": task,
+                "tools_overview": get_tools_overview(get_user_tools(tool_names)),
+            }
         )
 
         print("Analysis completion:\n", completion)
         try:
-            return Analysis.parse_raw(completion)
+            return pydantic_parser.parse(completion)
         except Exception as error:
             print(f"Error parsing analysis: {error}")
             return get_default_analysis()
@@ -56,7 +64,7 @@ class OpenAIAgentService(AgentService):
         print("Execution analysis:", analysis)
 
         tool_class = get_tool_from_name(analysis.action)
-        return tool_class(model_settings).call(goal, task, analysis.arg)
+        return await tool_class(model_settings).call(goal, task, analysis.arg)
 
     async def create_tasks_agent(
         self,
@@ -71,7 +79,7 @@ class OpenAIAgentService(AgentService):
         llm = create_model(model_settings)
         chain = LLMChain(llm=llm, prompt=create_tasks_prompt)
 
-        completion = chain.run(
+        completion = await chain.arun(
             {
                 "goal": goal,
                 "language": language,

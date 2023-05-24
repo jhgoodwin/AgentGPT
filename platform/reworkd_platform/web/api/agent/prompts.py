@@ -14,22 +14,40 @@ start_goal_prompt = PromptTemplate(
 )
 
 analyze_task_prompt = PromptTemplate(
-    template="""You have the following higher level objective "{goal}". You are
-    currently focusing on the following task: "{task}". Based on this information,
-    evaluate the best action to take strictly from the list of actions
+    template="""
+    High level objective: "{goal}"
+    Current task: "{task}"
+
+    Based on this information, you will perform the task by understanding the
+    problem, extracting variables, and being smart and efficient. You provide concrete
+    reasoning for your actions detailing your overall plan and any concerns you may
+    have. You evaluate the best action to take strictly from the list of actions
     below:\n\n
+
     {tools_overview}\n\n
+
+    Actions are the one word actions above.
     You cannot pick an action outside of this list.
     Return your response in an object of the form\n\n
-    {{ "action": "string","arg": "string" }}\n\n
-    that can be used in JSON.parse() and NOTHING ELSE.""",
+
+    {{
+        "reasoning": "string",
+        "action": "string",
+        "arg": "string"
+    }}\n\n
+    that can be used in JSON.parse() and NOTHING ELSE.
+    """,
     input_variables=["goal", "task", "tools_overview"],
 )
 
 execute_task_prompt = PromptTemplate(
     template="""Answer in the "{language}" language. Given
     the following overall objective `{goal}` and the following sub-task, `{task}`.
-    Perform the task and return an adequate response.""",
+
+    Perform the task by understanding the problem, extracting variables, and being smart
+    and efficient. Provide a descriptive response, make decisions yourself when
+    confronted with choices and provide reasoning for ideas / decisions.
+    """,
     input_variables=["goal", "language", "task"],
 )
 
