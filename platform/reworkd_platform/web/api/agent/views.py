@@ -1,130 +1,82 @@
-from typing import List, Optional
+from typing import List
 
-from fastapi import APIRouter, HTTPException, Body
+from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse as FastAPIStreamingResponse
 from pydantic import BaseModel
 
-from reworkd_platform.settings import settings
+from reworkd_platform.schemas import (
+    AgentRun,
+    AgentTaskAnalyze,
+    AgentTaskCreate,
+    AgentTaskExecute,
+    NewTasksResponse,
+)
+from reworkd_platform.web.api.agent.agent_service.agent_service import AgentService
 from reworkd_platform.web.api.agent.agent_service.agent_service_provider import (
     get_agent_service,
 )
-from reworkd_platform.web.api.agent.analysis import Analysis, get_default_analysis
-from reworkd_platform.web.api.agent.model_settings import ModelSettings
+from reworkd_platform.web.api.agent.analysis import Analysis
+from reworkd_platform.web.api.agent.dependancies import (
+    agent_analyze_validator,
+    agent_create_validator,
+    agent_execute_validator,
+    agent_start_validator,
+)
 from reworkd_platform.web.api.agent.tools.tools import get_external_tools, get_tool_name
 
 router = APIRouter()
 
 
-class AgentRequestBody(BaseModel):
-    modelSettings: ModelSettings = ModelSettings()
-    goal: str
-    language: str = "English"
-    task: Optional[str]
-    analysis: Optional[Analysis]
-    toolNames: Optional[List[str]]
-    tasks: Optional[List[str]]
-    lastTask: Optional[str]
-    result: Optional[str]
-    completedTasks: Optional[List[str]]
-
-
-class NewTasksResponse(BaseModel):
-    newTasks: List[str]
-
-
-@router.post("/start")
+@router.post(
+    "/start",
+)
 async def start_tasks(
-    req_body: AgentRequestBody = Body(
-        example={
-            "goal": "Create business plan for a bagel company",
-            "task": "Identify the most common bagel shapes",
-        }
-    ),
+    req_body: AgentRun = Depends(agent_start_validator),
+    agent_service: AgentService = Depends(get_agent_service(agent_start_validator)),
 ) -> NewTasksResponse:
-    try:
-        new_tasks = await get_agent_service().start_goal_agent(
-            req_body.modelSettings, req_body.goal, req_body.language
-        )
-        return NewTasksResponse(newTasks=new_tasks)
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while processing the request. {error}",
-        )
+    new_tasks = await agent_service.start_goal_agent(goal=req_body.goal)
+    return NewTasksResponse(newTasks=new_tasks, run_id=req_body.run_id)
 
 
 @router.post("/analyze")
 async def analyze_tasks(
-    req_body: AgentRequestBody,
+    req_body: AgentTaskAnalyze = Depends(agent_analyze_validator),
+    agent_service: AgentService = Depends(get_agent_service(agent_analyze_validator)),
 ) -> Analysis:
-    try:
-        return await get_agent_service().analyze_task_agent(
-            req_body.modelSettings if req_body.modelSettings else ModelSettings(),
-            req_body.goal,
-            req_body.task if req_body.task else "",
-            req_body.toolNames if req_body.toolNames else [],
-        )
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while processing the request. {error}",
-        )
-
-
-class Wiki(BaseModel):
-    goal: str
-    task: str
-    query: str
-
-
-@router.post("/test-wiki-search")
-async def wiki(req: Wiki) -> str:
-    return settings.frontend_url
-
-
-class CompletionResponse(BaseModel):
-    response: str
+    return await agent_service.analyze_task_agent(
+        goal=req_body.goal,
+        task=req_body.task or "",
+        tool_names=req_body.tool_names or [],
+    )
 
 
 @router.post("/execute")
 async def execute_tasks(
-    req_body: AgentRequestBody,
-) -> CompletionResponse:
-    try:
-        response = await get_agent_service().execute_task_agent(
-            req_body.modelSettings if req_body.modelSettings else ModelSettings(),
-            req_body.goal if req_body.goal else "",
-            req_body.language,
-            req_body.task if req_body.task else "",
-            req_body.analysis if req_body.analysis else get_default_analysis(),
-        )
-        return CompletionResponse(response=response)
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while processing the request. {error}",
-        )
+    req_body: AgentTaskExecute = Depends(agent_execute_validator),
+    agent_service: AgentService = Depends(
+        get_agent_service(validator=agent_execute_validator, streaming=True),
+    ),
+) -> FastAPIStreamingResponse:
+    return await agent_service.execute_task_agent(
+        goal=req_body.goal or "",
+        task=req_body.task or "",
+        analysis=req_body.analysis or Analysis.get_default_analysis(),
+    )
 
 
 @router.post("/create")
 async def create_tasks(
-    req_body: AgentRequestBody,
+    req_body: AgentTaskCreate = Depends(agent_create_validator),
+    agent_service: AgentService = Depends(get_agent_service(agent_create_validator)),
 ) -> NewTasksResponse:
-    try:
-        new_tasks = await get_agent_service().create_tasks_agent(
-            req_body.modelSettings if req_body.modelSettings else ModelSettings(),
-            req_body.goal,
-            req_body.language,
-            req_body.tasks if req_body.tasks else [],
-            req_body.lastTask if req_body.lastTask else "",
-            req_body.result if req_body.result else "",
-            req_body.completedTasks if req_body.completedTasks else [],
-        )
-        return NewTasksResponse(newTasks=new_tasks)
-    except Exception as error:
-        raise HTTPException(
-            status_code=500,
-            detail=f"An error occurred while processing the request. {error}",
-        )
+    new_tasks = await agent_service.create_tasks_agent(
+        goal=req_body.goal,
+        tasks=req_body.tasks or [],
+        last_task=req_body.last_task or "",
+        result=req_body.result or "",
+        completed_tasks=req_body.completed_tasks or [],
+    )
+    return NewTasksResponse(newTasks=new_tasks, run_id=req_body.run_id)
 
 
 class ToolModel(BaseModel):
@@ -147,5 +99,7 @@ async def get_user_tools() -> ToolsResponse:
             color="TODO: Change to image of tool",
         )
         for tool in tools
+        if tool.available()
     ]
+
     return ToolsResponse(tools=formatted_tools)
